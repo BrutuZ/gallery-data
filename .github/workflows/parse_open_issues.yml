@@ -1,0 +1,93 @@
+name: Patch all Open Issues
+
+on:
+  schedule:
+    - cron: "0 12 * * *"  # Daily at 12:00 UTC
+  workflow_dispatch:  # Manual
+
+jobs:
+  issues_list:
+    runs-on: ubuntu-latest
+    outputs:
+      issues: ${{ steps.issues_list.outputs.issues }}
+    steps:
+      - name: Find issues
+        uses: actions-cool/issues-helper@v3
+        id: issues_list
+        with:
+          actions: 'find-issues'
+          token: ${{ secrets.GITHUB_TOKEN }}
+          issue-creator: ${{ github.repository_owner }}
+          issue-state: 'open'
+          body-includes: '```json'
+          direction: desc
+          # labels: 'automated'
+
+  patch:
+    needs: issues_list
+    if: needs.issues_list.outputs.issues != '[]'
+    runs-on: ubuntu-latest
+    permissions:
+      actions: write
+      contents: write
+      issues: write
+      pull-requests: write
+    steps:
+      - name: Clone Repo
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Setup Git Environment
+        run: |
+          pip install requests
+          git config user.name github-actions
+          git config user.email github-actions@github.com
+          git remote add upstream https://github.com/${{ vars.UPSTREAM }}.git
+          git fetch --all
+          if [ $(git rev-parse origin/main) != $(git rev-parse upstream/main) ]; then
+            echo 'Upstream updated, syncing Origin'
+            git pull upstream main
+            git push origin main
+          fi
+          git checkout -b pr-stage upstream/main||{ git checkout pr-stage && git pull --rebase upstream main; }
+          git checkout origin/actions -- .github/scripts/add_hash.py
+
+      - name: Patch and Commit
+        run: |
+          python .github/scripts/add_hash.py --issues
+          git restore --staged .github/scripts/
+          git add *.json
+          if [ ! $(git status | grep 'nothing added to commit') ]; then
+            git commit -m "Update galleries"
+            git push origin pr-stage
+          fi
+
+      - name: Create PR
+        id: cpr
+        env:
+          GH_TOKEN: ${{ secrets.WORKFLOW_TOKEN }}
+        run: |
+          echo "response=$(gh api --method POST -H "Accept: application/vnd.github+json" \
+          -H "X-GitHub-Api-Version: 2022-11-28" /repos/${{ vars.UPSTREAM }}/pulls \
+          -f title='Update galleries' \
+          -f body='_Automated PR_
+          Closes ${{ github.server_url }}/${{ github.repository }}/issues/${{ join(fromJson(needs.issues_list.outputs.issues).*.number, format(', closes {0}/{1}/issues/', github.server_url, github.repository)) }}' \
+          -f head='${{ github.repository_owner }}:pr-stage' -f base='main')" >> $GITHUB_OUTPUT
+
+      - name: Close Issues
+        uses: actions-cool/issues-helper@v3
+        with:
+          actions: 'close-issues'
+          token: ${{ secrets.WORKFLOW_TOKEN }}
+          issue-creator: ${{ github.repository_owner }}
+          body-includes: '```json'
+          close-reason: completed
+          # body: Closed by ${{ fromJson(steps.cpr.outputs.response).html_url }}
+          # # inactive-day: 7

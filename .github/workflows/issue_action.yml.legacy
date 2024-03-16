@@ -1,0 +1,55 @@
+name: Patch on Issue Opened
+
+on:
+  issues:
+    types: [opened]
+  issue_comment:
+    types: [created]
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      # - name: Set Branch Name
+      #   run: echo "BRANCH_NAME=changes-$(date +%y%m%d)" >> $GITHUB_OUTPUT
+      #   id: branch_name  # ${{ steps.branch_name.outputs.BRANCH_NAME }}
+
+      - name: Parse Issue Body
+        uses: peter-murray/issue-body-parser-action@v2
+        id: issue-body
+        with:
+          payload: yaml
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          issue_id: ${{ github.event.issue.number }}
+          fail_on_missing: true
+
+      - name: Clone Repo
+        uses: actions/checkout@v4
+        with:
+          ref: main
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Checkout, patch and commit
+        if: steps.issue-body.outputs.payload != 'NOT_FOUND'
+        run: |
+          git config user.name github-actions
+          git config user.email github-actions@github.com
+          git remote add upstream https://github.com/LetrixZ/gallery-data.git
+          git fetch --all
+          git checkout -b pr-stage origin/pr-stage||git checkout -B pr-stage upstream/main
+          git checkout actions -- ./.github/scripts/add_hash.py
+          python ./.github/scripts/add_hash.py --id ${{ fromJSON(steps.issue-body.outputs.payload).id }} --hash  ${{ fromJSON(steps.issue-body.outputs.payload).hash }} --key  ${{ fromJSON(steps.issue-body.outputs.payload).key }}
+          git restore --staged ./.github/scripts/add_hash.py
+          git add *.json
+          git commit -m "Update gallery" -m "Closes #${{ github.event.issue.number }}"
+          git push origin pr-stage
+
+      # - name: Close Issue
+      #   uses: peter-evans/close-issue@v3
+      #   with:
+      #     comment: Entry Patched!
+      #     issue-number: ${{ github.event.issue.number }}
