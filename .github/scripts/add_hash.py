@@ -101,14 +101,14 @@ def parse_entry(id: int, key: str, hash: str):
         raise EOFError()
 
     if (
-        gallery_entry.get('data_key') != key
+        gallery_entry.get('key') != key
         or gallery_entry.get('hash') != hash
     ):
         updated_gallery = {}
         for k, v in gallery_entry.items():
             updated_gallery[k] = v
-            if k in ['key', 'data_key']:
-                updated_gallery['data_key'] = key
+            if k in ['gid', 'key']:
+                updated_gallery['key'] = key
             if k in ['url', 'hash']:
                 updated_gallery['hash'] = hash
 
